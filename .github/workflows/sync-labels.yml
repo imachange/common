@@ -1,0 +1,71 @@
+name: ラベル同期
+
+on:
+  push:
+    paths:
+      - '.github/labels.json'
+  workflow_dispatch:
+    inputs:
+      sync_mode:
+        description: '同期モードを選択してください。'
+        required: true
+        default: 'update'
+        type: choice
+        options:
+          - update
+          - replace
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Gitリポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: GitHub CLIを使用してラベルを同期
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f .github/labels.json ]; then
+            echo "エラー: .github/labels.json が見つかりません。スクリプトを終了します。"
+            exit 1
+          fi
+
+          SYNC_MODE=${{ github.event.inputs.sync_mode }}
+
+          if [ "$SYNC_MODE" == "replace" ]; then
+            echo "既存のラベルをすべて削除します..."
+            gh label list --json name -q '.[].name' 2>&1 | while IFS='|' read -r name; do
+              if [ -n "$name" ]; then
+                echo "ラベル '$name' を削除中..."
+                gh label delete "$name" --yes 2>&1 || echo "警告: ラベル '$name' の削除に失敗しました。"
+              fi
+            done
+          fi
+
+          echo "既存のGitHubラベルを取得中..."
+          EXISTING_LABELS=$(gh label list --json name -q '.[].name' 2>&1 || true)
+          
+          if echo "$EXISTING_LABELS" | grep -q "Resource not accessible by integration"; then
+            echo "警告: ラベルの読み取り権限がないため、既存ラベルの確認をスキップします。新しいラベルの作成を試みますが、重複する可能性があります。"
+            EXISTING_LABELS=""
+          fi
+
+          echo "`.github/labels.json`の内容に基づいてラベルを更新中..."
+          jq -r '.[] | "\(.name)|\(.color)|\(.description // "")"' .github/labels.json | while IFS='|' read -r name color description; do
+            if [ -n "$name" ]; then
+              if echo "$EXISTING_LABELS" | grep -Fxq "$name"; then
+                echo "ラベル '$name' は既に存在します。更新を試みます。"
+                gh label edit "$name" --color "$color" --description "$description" 2>&1 || echo "エラー: ラベル '$name' の更新に失敗しました。権限不足の可能性があります。"
+              else
+                echo "ラベルを作成中: $name"
+                gh label create "$name" --color "$color" --description "$description" 2>&1 || echo "エラー: ラベル '$name' の作成に失敗しました。権限不足の可能性があります。"
+              fi
+            fi
+          done
+          
+          echo ""
+          echo "ラベル同期が完了しました。"

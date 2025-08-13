@@ -1,0 +1,77 @@
+[
+  {
+    "name": "00.priority/S",
+    "color": "B60205",
+    "description": "最優先（緊急対応が必要なクリティカルなタスク）"
+  },
+  {
+    "name": "01.priority/A",
+    "color": "D93F0B",
+    "description": "重要な機能やバグ修正"
+  },
+  {
+    "name": "02.priority/B",
+    "color": "FBCA04",
+    "description": "通常のタスクや改善"
+  },
+  {
+    "name": "03.priority/C",
+    "color": "BFDADC",
+    "description": "重要度が低いタスクや将来的なアイデア"
+  },
+  {
+    "name": "10.type/bug",
+    "color": "D73A4A",
+    "description": "意図しない動作やエラーを修正する課題"
+  },
+  {
+    "name": "11.type/feature",
+    "color": "0E8A16",
+    "description": "新しい機能やページなどを追加する課題"
+  },
+  {
+    "name": "12.type/enhancement",
+    "color": "1D76DB",
+    "description": "既存の機能をより良くする改善"
+  },
+  {
+    "name": "13.type/documentation",
+    "color": "F7F7F7",
+    "description": "ドキュメントやコメントなどの文章を追加・修正する課題"
+  },
+  {
+    "name": "14.type/chore",
+    "color": "B3B0C6",
+    "description": "CI/CDやビルドスクリプト、依存関係の更新など"
+  },
+  {
+    "name": "20.status/todo",
+    "color": "C2E0C6",
+    "description": "着手待ちの状態"
+  },
+  {
+    "name": "21.status/in-progress",
+    "color": "0052CC",
+    "description": "作業が進行中の状態"
+  },
+  {
+    "name": "22.status/on-hold",
+    "color": "CCCCCC",
+    "description": "外部要因などで一時停止中の状態"
+  },
+  {
+    "name": "23.status/review",
+    "color": "F9D0C4",
+    "description": "作業が終わり、レビューを待っている状態"
+  },
+  {
+    "name": "24.status/done",
+    "color": "0E8A16",
+    "description": "作業が完了した状態"
+  },
+  {
+    "name": "25.status/closed",
+    "color": "B60205",
+    "description": "対応しないことが決まった状態"
+  }
+]

@@ -1,0 +1,42 @@
+name: 不具合報告
+description: 予期せぬ動作やエラーを報告する
+title: "[BUG] "
+labels: ["10.type/bug", "20.status/todo"]
+body:
+  - type: markdown
+    attributes:
+      value: "### 不具合報告ありがとうございます！"
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: '再現手順'
+      description: 'どのようにすれば問題が再現するか、できるだけ詳しく説明してください。'
+      placeholder: '1. ...\n2. ...\n3. ...'
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: '期待される動作'
+      description: 'この手順を実行したときに、どのような動作を期待していましたか？'
+    validations:
+      required: true
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: '実際の動作'
+      description: '代わりに、どのような動作が発生しましたか？（エラーメッセージやスクリーンショットなどがあれば追加してください）'
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: '優先度'
+      description: 'この不具合の対応優先度を選択してください。'
+      options:
+        - "00.priority/S"
+        - "01.priority/A"
+        - "02.priority/B"
+        - "03.priority/C"
+    validations:
+      required: true

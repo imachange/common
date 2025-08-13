@@ -1,0 +1,38 @@
+name: プルリクエスト自動作成・更新
+
+# feature/ や fix/ で始まるブランチへのプッシュで起動
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+
+# PR作成とIssueラベル更新の権限を付与
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  create-or-update-pr:
+    runs-on: ubuntu-latest
+    steps:
+      # リポジトリをチェックアウト
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # すべての履歴を取得
+
+      # スクリプトを実行可能にする
+      - name: スクリプトのパーミッション設定
+        run: chmod +x .github/workflows/create-pr.sh
+
+      # すべてのPR作成ロジックをスクリプトで実行
+      - name: PRを自動作成または更新
+        env:
+          # スクリプトに渡す環境変数をここで定義
+          # RUNNER_TEMPは組み込み変数として自動的に使用可能
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO_NAME: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: ./.github/workflows/create-pr.sh

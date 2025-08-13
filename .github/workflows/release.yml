@@ -1,0 +1,48 @@
+name: リリース準備
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: コード取得
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: pnpmセットアップ
+        uses: pnpm/action-setup@v3
+        with:
+          version: latest
+
+      - name: Node.js設定
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: 依存関係インストール
+        run: pnpm install --frozen-lockfile
+
+      - name: Release Please実行
+        id: release
+        uses: googleapis/release-please-action@v4
+        continue-on-error: true # 権限エラーを無視して続行
+        with:
+          release-type: node
+          config-file: ./.github/release-please-config.json
+
+      - name: リリース成功
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          echo "新規リリース: ${{ steps.outputs.release_created }}"
+          echo "タグ名: ${{ steps.release.outputs.tag_name }}"

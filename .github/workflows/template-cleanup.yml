@@ -1,0 +1,235 @@
+name: テンプレートリポジトリ初期化
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  template-cleanup:
+    # テンプレートリポジトリ自体では実行しない
+    if: github.repository != 'imachange/boilerplate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:      
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: pnpmをインストール
+        uses: pnpm/action-setup@v4
+
+      - name: jqがインストールされていることを確認
+        run: |
+          # SC2181: コマンドの実行結果を直接ifで判定
+          if ! command -v jq &> /dev/null; then
+              echo "jq が見つかりません。インストールします。"
+              # SC2181: インストールコマンドの実行結果を直接判定
+              if ! sudo apt-get update && sudo apt-get install -y jq; then
+                echo "エラー: jq のインストールに失敗しました。"
+                exit 1
+              fi
+          else
+              echo "jq はすでにインストールされています。"
+          fi
+
+      - name: リポジトリ情報を取得
+        id: repo-info
+        run: |
+          # SC2086: 変数を引用符で囲む
+          echo "repo_name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+          echo "repo_owner=${GITHUB_REPOSITORY%/*}" >> "$GITHUB_OUTPUT"
+
+      - name: package.jsonを新しいリポジトリ情報で更新
+        run: |
+          if [ -f package.json ]; then
+            echo "package.jsonをリポジトリ情報で更新します..."
+            if ! jq --arg name "${{ steps.repo-info.outputs.repo_name }}" \
+                    --arg repo "https://github.com/${{ github.repository }}" \
+                    '.name = $name | .repository.url = $repo' package.json > package.json.tmp; then
+              echo "エラー: package.jsonの更新に失敗しました。ファイルが不正な形式である可能性があります。"
+              exit 1
+            fi
+            # SC2181: mvコマンドの実行結果を直接判定
+            if ! mv package.json.tmp package.json; then
+              echo "エラー: 一時ファイルのリネームに失敗しました。"
+              exit 1
+            fi
+          else
+            echo "警告: package.jsonが見つかりません。更新をスキップします。"
+          fi
+
+      - name: package.jsonのバージョンを初期化
+        run: |
+          if [ -f package.json ]; then
+            echo "package.jsonのバージョンを0.0.1に設定します。"
+            if ! jq '.version = "0.0.1"' package.json > package.json.tmp; then
+              echo "エラー: package.jsonのバージョン設定に失敗しました。ファイルが不正な形式である可能性があります。"
+              exit 1
+            fi
+            # SC2181: mvコマンドの実行結果を直接判定
+            if ! mv package.json.tmp package.json; then
+              echo "エラー: 一時ファイルのリネームに失敗しました。"
+              exit 1
+            fi
+          else
+            echo "警告: package.jsonが見つかりません。バージョン設定をスキップします。"
+          fi
+
+      - name: 初期ラベルを作成（labels.jsonを優先）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing_labels_output=$(gh label list --json name -q '.[].name' 2>&1 || true)
+          existing_labels=""
+          if ! echo "$existing_labels_output" | grep -q "Resource not accessible by integration"; then
+            existing_labels="$existing_labels_output"
+          fi
+          
+          if [ -f .github/labels.json ]; then
+            echo "`.github/labels.json`が見つかりました。ファイルに基づいてラベルを作成します。"
+            # SC2086: 変数を引用符で囲む
+            jq -r '.[] | "\(.name)|\(.color)|\(.description // "")"' .github/labels.json | while IFS='|' read -r name color description; do
+              if [ -n "$name" ]; then
+                # SC2086: 変数を引用符で囲む
+                if echo "$existing_labels" | grep -Fxq "$name"; then
+                  echo "ラベル '$name' は既に存在します。スキップします。"
+                else
+                  echo "ラベルを作成中: $name"
+                  gh label create "$name" --color "$color" --description "$description" 2>&1 || echo "エラー: ラベル '$name' の作成に失敗しました。権限不足の可能性があります。"
+                fi
+              fi
+            done
+          else
+            echo "`.github/labels.json`が見つかりません。デフォルトのラベルを作成します。"
+            DEFAULT_LABEL_NAME="14.type/chore"
+            # SC2086: 変数を引用符で囲む
+            if echo "$existing_labels" | grep -Fxq "$DEFAULT_LABEL_NAME"; then
+              echo "デフォルトラベル '$DEFAULT_LABEL_NAME' はすでに存在します。スキップします。"
+            else
+              echo "ラベルを作成中: $DEFAULT_LABEL_NAME"
+              gh label create "$DEFAULT_LABEL_NAME" --color "f9d020" --description "新規のタスクやIssue" 2>&1 || echo "エラー: ラベル '$DEFAULT_LABEL_NAME' の作成に失敗しました。権限不足の可能性があります。"
+            fi
+          fi
+
+      - name: 初期Issueを作成
+        id: create-initial-issue
+        run: |
+          echo "初期設定完了のIssueを作成します。"
+          
+          # SC2006: バッククォートを$(...)に修正
+          # SC2181: 終了コードの直接チェック
+          if ! ISSUE_URL_OUTPUT=$(gh issue create \
+            --title "chore: プロジェクトが正常に初期化されました #1" \
+            --body "テンプレートからの初期化を開始しました。初期設定が完了次第、このIssueに詳細を追記します。" \
+            --label "14.type/chore" \
+            2>&1); then
+            echo "エラー: 初期Issueの作成に失敗しました。"
+            echo "gh issue create コマンドの出力:"
+            echo "$ISSUE_URL_OUTPUT"
+            exit 1
+          fi
+
+          # SC2006: バッククォートを$(...)に修正
+          ISSUE_NUMBER=$(echo "$ISSUE_URL_OUTPUT" | grep -oE '[0-9]+$')
+          
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "エラー: Issue番号の抽出に失敗しました。"
+            exit 1
+          fi
+
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: package.jsonのnameをリポジトリ名に変更
+        run: |
+          if [ -f package.json ]; then
+            repo_name="${GITHUB_REPOSITORY#*/}"
+            echo "package.jsonのnameをリポジトリ名 '$repo_name' に変更します。"
+            if ! jq --arg name "$repo_name" '.name = $name' package.json > package.json.tmp; then
+              echo "エラー: package.jsonのname変更に失敗しました。ファイルが不正な形式である可能性があります。"
+              exit 1
+            fi
+            # SC2181: mvコマンドの実行結果を直接判定
+            if ! mv package.json.tmp package.json; then
+              echo "エラー: 一時ファイルのリネームに失敗しました。"
+              exit 1
+            fi
+          else
+            echo "警告: package.jsonが見つかりません。name変更をスキップします。"
+          fi
+
+      - name: このワークフローファイルを削除
+        run: |
+          echo "テンプレート初期化ワークフローを削除します。"
+          # SC2181: rmコマンドの実行結果を直接判定
+          if ! rm -f .github/workflows/template-cleanup.yml; then
+            echo "警告: ワークフローファイルの削除に失敗しました。"
+          fi
+          if ! rm -f CHANGELOG.md; then
+            echo "警告: CHANGELOG.mdの削除に失敗しました。"
+          fi
+
+      - name: 変更をコミットしてプッシュ
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add .
+          
+          if ! git diff --staged --quiet; then
+            echo "変更をコミットしてプッシュします。"
+            # SC2181: コミットの実行結果を直接ifで判定
+            if ! git commit -m "chore: 🎉 プロジェクト初期化 #${{ steps.create-initial-issue.outputs.issue_number }}
+
+            - package.jsonをリポジトリ情報で更新
+            - package.jsonのバージョンを初期化
+            - リポジトリラベルを設定
+            - テンプレート初期化ワークフローを削除"; then
+              echo "エラー: コミットに失敗しました。"
+              exit 1
+            fi
+            
+            # SC2181: プッシュの実行結果を直接ifで判定
+            if ! git push; then
+              echo "エラー: プッシュに失敗しました。"
+              exit 1
+            fi
+          else
+            echo "コミットする変更はありません。"
+          fi
+      
+      - name: 初期Issueに追記
+        run: |
+          echo "初期設定完了のIssueに追記します。"
+          # SC2181: gh issue comment の実行結果を直接ifで判定
+          if ! gh issue comment ${{ steps.create-initial-issue.outputs.issue_number }} \
+            --body "初期設定が完了しました。
+
+            ## 完了した作業
+            - ✅ プロジェクト構造の作成
+            - ✅ package.jsonの更新
+            - ✅ リポジトリラベルの設定
+            - ✅ 依存関係のインストール
+
+            ## 次のステップ
+            1. README.mdを作成してプロジェクトの詳細を記載
+            2. 必要に応じて依存関係を追加
+            3. プロジェクトの開発を開始
+            4. このテンプレートについては[wiki](https://github.com/imachange/boilerplate/wiki)および[release](https://github.com/imachange/boilerplate/releases)を参照してください。
+
+            このIssueは確認後に閉じていただけます。"; then
+              echo "警告: 初期Issueの追記に失敗しました。権限不足の可能性があります。"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

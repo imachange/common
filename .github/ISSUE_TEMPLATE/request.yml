@@ -1,0 +1,41 @@
+name: リクエスト
+description: 新しい機能の追加や既存機能の改善を提案する
+title: "[REQUEST] "
+assignees:
+  -
+body:
+  - type: dropdown
+    id: request-type
+    attributes:
+      label: '要望の種類'
+      description: '新しい機能の追加(feature)ですか？ それとも既存機能の改善(enchancement)ですか？'
+      options:
+        - "11.type/feature"
+        - "12.type/enhancement"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: '優先度'
+      description: 'この要望の優先度を選択してください。'
+      options:
+        - "02.priority/B"
+        - "01.priority/A"
+        - "03.priority/C"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: '要望内容'
+      description: 'どのような要望か、できるだけ具体的に説明してください。なぜこの要望が必要か、どのようなメリットがあるかも含めると、より検討しやすくなります。'
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: '代替案'
+      description: '現在、この問題を解決するためにどのような代替案がありますか？（任意）'
+    validations:
+      required: false
