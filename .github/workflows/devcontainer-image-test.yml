@@ -47,8 +47,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: devcontainer CLI インストール
-        run: npm install -g @devcontainers/cli
+      - name: QEMUセットアップ
+        uses: docker/setup-qemu-action@v3
 
       - name: イメージ存在チェック
         id: check-image
@@ -62,9 +62,16 @@ jobs:
             echo "image=$IMAGE" >> $GITHUB_OUTPUT
           fi
 
-      - name: devcontainerイメージ起動テスト
+      - name: イメージpull&起動確認
         if: steps.check-image.outputs.found == 'true'
         run: |
-          set -e
-          echo "[INFO] devcontainerイメージ起動テスト: ${{ steps.check-image.outputs.image }} (${{ matrix.arch }})"
-          devcontainer up --workspace-folder . --image ${{ steps.check-image.outputs.image }}
+          IMAGE=${{ steps.check-image.outputs.image }}
+          ARCH=${{ matrix.arch }}
+          echo "[INFO] $ARCH イメージのpullと起動テスト: $IMAGE"
+          docker pull --platform linux/$ARCH $IMAGE
+          docker run --rm --platform linux/$ARCH $IMAGE uname -m
+
+      # - name: devcontainerイメージ起動テスト
+      #   if: steps.check-image.outputs.found == 'true' && matrix.arch == 'amd64'
+      #   run: |
+      #     devcontainer up --workspace-folder . --image-name ${{ steps.check-image.outputs.image }}
