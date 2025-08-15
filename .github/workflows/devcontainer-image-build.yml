@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: コードチェックアウト
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: main取得
         run: git fetch origin main
