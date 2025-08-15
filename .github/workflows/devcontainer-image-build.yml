@@ -113,7 +113,7 @@ jobs:
           NAME=$(basename "$DIR")
           REPO="ghcr.io/${{ github.repository_owner }}/common"
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            TAGS="devcontainer-${NAME}-latest devcontainer-${NAME}-$(date +%Y%m%d%H%M%S)"
+            TAGS="devcontainer-${NAME}-latest,devcontainer-${NAME}-$(date +%Y%m%d%H%M%S)"
           else
             TAGS="devcontainer-${NAME}-pre"
           fi
