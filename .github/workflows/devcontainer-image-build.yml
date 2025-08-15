@@ -58,7 +58,7 @@ jobs:
         run: |
           set -e
           echo "[INFO] devcontainerディレクトリ検出開始"
-          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/devcontainer.json' \; -print | sort)
+          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d \( -exec test -f '{}/devcontainer.json' \; -o -exec test -f '{}/.devcontainer/devcontainer.json' \; \) -print)
           if [ -z "$dirs" ]; then
             echo "[WARNING] devcontainerディレクトリ未検出"
             echo "matrix=[]" >> $GITHUB_OUTPUT
