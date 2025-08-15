@@ -66,12 +66,13 @@ jobs:
 
           if [ "${#found[@]}" -eq 0 ]; then
             echo "[WARNING] devcontainer未検出"
-            echo "matrix=[]" >> $GITHUB_OUTPUT
+            # JSON配列としてクォート
+            echo 'matrix=[]' >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "[" > matrix.json
-          first=1
+          # JSON配列を生成
+          json_items=()
           for path in "${found[@]}"; do
             parent_dir=$(dirname "$(dirname "$path")")
             if [ "$parent_dir" = "." ] || [ "$parent_dir" = "/" ]; then
@@ -90,13 +91,13 @@ jobs:
             prefix="$USER_PREFIX"
             safix="$SAFIX"
             full_tag="${prefix}-${tag}-${safix}"
-            [ $first -eq 0 ] && echo "," >> matrix.json
-            echo -n "{\"dir\":\"$dir\",\"name\":\"$tag\",\"tag\":\"$full_tag\"}" >> matrix.json
-            first=0
+            json_items+=("{\"dir\":\"$dir\",\"name\":\"$tag\",\"tag\":\"$full_tag\"}")
           done
-          echo "]" >> matrix.json
-          matrix=$(cat matrix.json)
-          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+
+          # 配列として正しいJSONにする
+          matrix_json="[$(IFS=,; echo "${json_items[*]}")]"
+          # GITHUB_OUTPUTへはクォートせずに出力（GitHub Actionsの仕様に準拠）
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
 
   build-and-push:
     name: devcontainerイメージビルド・プッシュ
