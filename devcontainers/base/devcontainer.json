@@ -1,6 +1,6 @@
 
 {
-  "name": "Minimal Dev",
+  "name": "BasicなDevcontainer(Debian Bookworm)",
   "image": "debian:bookworm-slim",
   "remoteUser": "vscode",
   "mounts": [
