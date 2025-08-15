@@ -12,6 +12,10 @@ on:
       - 'devcontainers/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   call-build-workflow:
     uses: ./.github/workflows/devcontainer-image-build.yml
