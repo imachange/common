@@ -34,12 +34,18 @@ jobs:
       - name: devcontainers配下の差分判定
         id: filter
         run: |
-          if git diff --name-only origin/main...HEAD | grep -q '^devcontainers/'; then
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # mainブランチpush時は常にビルド
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "[INFO] devcontainers配下に差分あり"
+            echo "[INFO] mainブランチpushのため常にビルド"
           else
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "[INFO] devcontainers配下に差分なし"
+            if git diff --name-only origin/main...HEAD | grep -q '^devcontainers/'; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "[INFO] devcontainers配下に差分あり"
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "[INFO] devcontainers配下に差分なし"
+            fi
           fi
 
   detect-devcontainers:
