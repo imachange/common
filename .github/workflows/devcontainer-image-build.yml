@@ -17,7 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # リトライ回数や間隔はここで一元管理可能
   MAX_RETRIES: 18  # 3分間
   RETRY_INTERVAL: 10
 
@@ -75,7 +74,6 @@ jobs:
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            # 1行JSONで出力
             matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]' | tr -d '\n')
             echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
@@ -145,11 +143,9 @@ jobs:
         id: gen-tags
         shell: bash
         run: |
-          # 1ジョブ1dirなので {dir, name, tag} を1件出す
           printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.main_tag }}" > tags-matrix.json
           echo "tags-matrix=$(cat tags-matrix.json)" >> $GITHUB_OUTPUT
 
-  # 各イメージ（dir/tagごと）でテスト
   test-devcontainer:
     name: devcontainerイメージ起動テスト
     needs: build-and-push
@@ -198,32 +194,18 @@ jobs:
           echo "::error ::Docker image $IMAGE ($ARCH) was not found after $((MAX_RETRIES*RETRY_INTERVAL)) seconds."
           exit 1
 
-      - name: devcontainer CLI インストール (amd64のみ)
-        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
-        run: npm install -g @devcontainers/cli
-
-      - name: devcontainerイメージ起動テスト (amd64)
-        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
-        run: |
-          set -e
-          IMAGE=${{ steps.wait-for-image.outputs.image }}
-          echo "[INFO] devcontainerイメージ起動テスト: $IMAGE (amd64)"
-          if ! devcontainer up --workspace-folder . --image "$IMAGE"; then
-            echo "::error ::devcontainer up failed for $IMAGE (amd64)"
-            exit 1
-          fi
-
-      - name: arm64イメージ起動テスト (docker run)
-        if: matrix.arch == 'arm64' && steps.wait-for-image.outputs.found == 'true'
+      - name: イメージ起動テスト (docker run)
+        if: steps.wait-for-image.outputs.found == 'true'
         shell: bash
         run: |
           IMAGE=${{ steps.wait-for-image.outputs.image }}
-          echo "[INFO] arm64イメージ起動テスト: $IMAGE (arm64)"
+          ARCH=${{ matrix.arch }}
+          echo "[INFO] イメージ起動テスト: $IMAGE ($ARCH)"
           set +e
-          docker run --rm --platform linux/arm64 "$IMAGE" uname -m
+          docker run --rm --platform linux/$ARCH "$IMAGE" uname -m
           STATUS=$?
           if [ $STATUS -ne 0 ]; then
-            echo "::error ::Failed to run $IMAGE on arm64. Exit code: $STATUS"
+            echo "::error ::Failed to run $IMAGE on $ARCH. Exit code: $STATUS"
             exit $STATUS
           fi
 
@@ -231,4 +213,4 @@ jobs:
         if: failure()
         run: |
           echo "::error ::devcontainerイメージ起動テストでエラーが発生しました。"
-          # 必要に応じて通知等を
+          # 必要に応じて通知等
