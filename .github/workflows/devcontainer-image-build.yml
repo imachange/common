@@ -1,16 +1,11 @@
 name: devcontainerイメージ自動ビルド・起動テスト
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'devcontainers/**'
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
-    paths:
-      - 'devcontainers/**'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      search_path:
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
