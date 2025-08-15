@@ -58,16 +58,17 @@ jobs:
         run: |
           set -e
           echo "[INFO] devcontainerディレクトリ検出開始"
-          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/devcontainer.json' \; -print | sort) || { echo "[ERROR] ディレクトリ検出失敗"; exit 1; }
+          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/devcontainer.json' \; -print | sort)
           if [ -z "$dirs" ]; then
             echo "[WARNING] devcontainerディレクトリ未検出"
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            json=$(printf '%s\n' $dirs | jq -R . | jq -s .) || { echo "[ERROR] JSON変換失敗"; exit 1; }
-            echo "matrix=$json" >> $GITHUB_OUTPUT
+            # jq -c で1行のJSON配列に
+            json=$(printf '%s\n' $dirs | jq -R . | jq -cs .)
+            echo "matrix=${json}" >> $GITHUB_OUTPUT
           fi
-
+          
   build-and-push:
     name: devcontainerイメージビルド・プッシュ
     needs: detect-devcontainers
