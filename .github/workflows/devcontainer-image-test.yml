@@ -67,4 +67,4 @@ jobs:
         run: |
           set -e
           echo "[INFO] devcontainerイメージ起動テスト: ${{ steps.check-image.outputs.image }} (${{ matrix.arch }})"
-          devcontainer up --workspace-folder . --image-name ${{ steps.check-image.outputs.image }} --platform linux/${{ matrix.arch }}
+          devcontainer up --workspace-folder . --image ${{ steps.check-image.outputs.image }}
