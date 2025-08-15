@@ -76,7 +76,7 @@ jobs:
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
             # JSON配列 [{"dir": ..., "name": ...}]
-            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/" + ., name: .}]')
+            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]')
             echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
 
