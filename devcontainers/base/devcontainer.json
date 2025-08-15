@@ -18,9 +18,5 @@
     "source=cargo-bookworm,target=/home/vscode/.local/share/cargo,type=volume",
     // gopath (XDG_DATA_HOME)
     "source=gopath-bookworm,target=/home/vscode/.local/share/go,type=volume"
-  ],
-  "postCreateCommand": [
-    // pnpmのストアパスをXDG準拠に明示
-    "pnpm config set store-dir $XDG_DATA_HOME/pnpm"
   ]
 }
