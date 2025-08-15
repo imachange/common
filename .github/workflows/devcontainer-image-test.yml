@@ -1,0 +1,70 @@
+name: devcontainerイメージ起動テスト
+
+on:
+  workflow_run:
+    workflows: ["devcontainerイメージ自動ビルド"]
+    types:
+      - completed
+
+jobs:
+  detect-devcontainers:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: コードチェックアウト
+        uses: actions/checkout@v4
+
+      - name: devcontainerディレクトリ検出
+        id: set-matrix
+        run: |
+          set -e
+          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d)
+          if [ -z "$dirs" ]; then
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          else
+            json=$(printf '%s\n' $dirs | xargs -n1 basename | jq -R . | jq -cs .)
+            echo "matrix=${json}" >> $GITHUB_OUTPUT
+          fi
+
+  test-devcontainer:
+    needs: detect-devcontainers
+    if: needs.detect-devcontainers.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJson(needs.detect-devcontainers.outputs.matrix) }}
+        arch: [amd64, arm64]
+    steps:
+      - name: コードチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Dockerログイン
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: devcontainer CLI インストール
+        run: npm install -g @devcontainers/cli
+
+      - name: イメージ存在チェック
+        id: check-image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/common:devcontainer-${{ matrix.name }}-pre
+          if docker manifest inspect $IMAGE > /dev/null 2>&1; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: devcontainerイメージ起動テスト
+        if: steps.check-image.outputs.found == 'true'
+        run: |
+          set -e
+          echo "[INFO] devcontainerイメージ起動テスト: ${{ steps.check-image.outputs.image }} (${{ matrix.arch }})"
+          devcontainer up --workspace-folder . --image-name ${{ steps.check-image.outputs.image }} --platform linux/${{ matrix.arch }}
