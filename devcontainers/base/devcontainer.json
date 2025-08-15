@@ -1,0 +1,26 @@
+
+{
+  "name": "Minimal Dev",
+  "image": "debian:bookworm-slim",
+  "remoteUser": "vscode",
+  "mounts": [
+    // pnpm store (XDG_DATA_HOME)
+    "source=pnpm-store-bookworm,target=/home/vscode/.local/share/pnpm,type=volume",
+    // mise data (XDG_DATA_HOME)
+    "source=mise-data-bookworm,target=/home/vscode/.local/share/mise,type=volume",
+    // mise cache (XDG_CACHE_HOME)
+    "source=mise-cache-bookworm,target=/home/vscode/.cache/mise,type=volume",
+    // aqua data (XDG_DATA_HOME)
+    "source=aqua-data-bookworm,target=/home/vscode/.local/share/aquaproj-aqua,type=volume",
+    // rustup (XDG_DATA_HOME)
+    "source=rustup-bookworm,target=/home/vscode/.local/share/rustup,type=volume",
+    // cargo (XDG_DATA_HOME)
+    "source=cargo-bookworm,target=/home/vscode/.local/share/cargo,type=volume",
+    // gopath (XDG_DATA_HOME)
+    "source=gopath-bookworm,target=/home/vscode/.local/share/go,type=volume"
+  ],
+  "postCreateCommand": [
+    // pnpmのストアパスをXDG準拠に明示
+    "pnpm config set store-dir $XDG_DATA_HOME/pnpm"
+  ]
+}
