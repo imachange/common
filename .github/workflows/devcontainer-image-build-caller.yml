@@ -1,0 +1,23 @@
+name: devcontainerイメージ自動ビルド・起動テスト呼び出し
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'devcontainers/**'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'devcontainers/**'
+  workflow_dispatch:
+
+jobs:
+  call-build-workflow:
+    uses: ./.github/workflows/devcontainer-image-build.yml
+    with:
+      search_path: devcontainers
+      # 必要に応じて以下も指定可能
+      # prefix: devcontainer
+      # tag: ""
+      # safix: ""
