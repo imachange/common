@@ -137,7 +137,7 @@ jobs:
           DIR="${{ matrix.dir }}"
           NAME="${{ matrix.name }}"
           TAG="${{ matrix.tag }}"
-          REPO="ghcr.io/${{ github.repository_owner }}/${{ github.repository }}"
+          REPO="ghcr.io/${{ github.repository }}"
           echo "[INFO] イメージ名・タグ生成: $REPO:$TAG"
           echo "repo=$REPO" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -185,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          IMAGE=ghcr.io/${{ github.repository_owner }}/${{ github.repository }}:${{ matrix.tag }}
+          IMAGE=ghcr.io/${{ github.repository }}:${{ matrix.tag }}
           echo "[INFO] Start polling manifest for $IMAGE (amd64)"
           for i in $(seq 1 "${MAX_RETRIES}"); do
             if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "amd64"; then
