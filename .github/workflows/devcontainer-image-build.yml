@@ -1,4 +1,4 @@
-name: devcontainerイメージ自動ビルド
+name: devcontainerイメージ自動ビルド・起動テスト
 
 on:
   push:
@@ -15,6 +15,11 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # リトライ回数や間隔はここで一元管理可能
+  MAX_RETRIES: 18  # 3分間
+  RETRY_INTERVAL: 10
 
 jobs:
   check-changes:
@@ -35,7 +40,6 @@ jobs:
         id: filter
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            # mainブランチpush時は常にビルド
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "[INFO] mainブランチpushのため常にビルド"
           else
@@ -61,6 +65,7 @@ jobs:
 
       - name: devcontainerディレクトリ検出
         id: set-matrix
+        shell: bash
         run: |
           set -e
           echo "[INFO] devcontainerディレクトリ検出開始"
@@ -70,11 +75,11 @@ jobs:
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            # jq -c で1行のJSON配列に
-            json=$(printf '%s\n' $dirs | jq -R . | jq -cs .)
-            echo "matrix=${json}" >> $GITHUB_OUTPUT
+            # JSON配列 [{"dir": ..., "name": ...}]
+            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/" + ., name: .}]')
+            echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
-          
+
   build-and-push:
     name: devcontainerイメージビルド・プッシュ
     needs: detect-devcontainers
@@ -83,10 +88,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: ${{ fromJson(needs.detect-devcontainers.outputs.matrix) }}
+        include: ${{ fromJson(needs.detect-devcontainers.outputs.matrix) }}
     permissions:
       contents: read
       packages: write
+    outputs:
+      tags-matrix: ${{ steps.gen-tags.outputs.tags-matrix }}
     steps:
       - name: コードチェックアウト
         uses: actions/checkout@v4
@@ -110,17 +117,20 @@ jobs:
           set -e
           echo "[INFO] イメージ名・タグ生成開始"
           DIR="${{ matrix.dir }}"
-          NAME=$(basename "$DIR")
+          NAME="${{ matrix.name }}"
           REPO="ghcr.io/${{ github.repository_owner }}/common"
           if [[ "${{ github.event_name }}" == "push" ]]; then
             TAGS="devcontainer-${NAME}-latest,devcontainer-${NAME}-$(date +%Y%m%d%H%M%S)"
+            MAIN_TAG="devcontainer-${NAME}-latest"
           else
             TAGS="devcontainer-${NAME}-pre"
+            MAIN_TAG="devcontainer-${NAME}-pre"
           fi
           echo "repo=$REPO" >> $GITHUB_OUTPUT
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "main_tag=$MAIN_TAG" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "[INFO] イメージ名・タグ生成完了: $TAGS"
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
 
       - name: devcontainers/ciによるビルド・プッシュ
         uses: devcontainers/ci@v0.3
@@ -130,3 +140,95 @@ jobs:
           imageTag: ${{ steps.meta.outputs.tags }}
           platform: linux/amd64,linux/arm64
           push: always
+
+      - name: matrix用タグ情報生成
+        id: gen-tags
+        shell: bash
+        run: |
+          # 1ジョブ1dirなので {dir, name, tag} を1件出す
+          printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.main_tag }}" > tags-matrix.json
+          echo "tags-matrix=$(cat tags-matrix.json)" >> $GITHUB_OUTPUT
+
+  # 各イメージ（dir/tagごと）でテスト
+  test-devcontainer:
+    name: devcontainerイメージ起動テスト
+    needs: build-and-push
+    if: needs.build-and-push.outputs.tags-matrix != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.build-and-push.outputs.tags-matrix) }}
+        arch: [amd64, arm64]
+    steps:
+      - name: コードチェックアウト
+        uses: actions/checkout@v4
+
+      - name: QEMUセットアップ (arm64のみ)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Dockerログイン
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: イメージがpull可能になるまでリトライ
+        id: wait-for-image
+        shell: bash
+        run: |
+          set -e
+          IMAGE=ghcr.io/${{ github.repository_owner }}/common:${{ matrix.tag }}
+          ARCH=${{ matrix.arch }}
+          echo "[INFO] Start polling manifest for $IMAGE ($ARCH)"
+          for i in $(seq 1 "${MAX_RETRIES}"); do
+            if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "$ARCH"; then
+              echo "found=true" >> $GITHUB_OUTPUT
+              echo "image=$IMAGE" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              echo "[WARNING] $IMAGE for $ARCH not found yet. Retry $i/${MAX_RETRIES}..."
+              sleep "${RETRY_INTERVAL}"
+            fi
+          done
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          echo "::error ::Docker image $IMAGE ($ARCH) was not found after $((MAX_RETRIES*RETRY_INTERVAL)) seconds."
+          exit 1
+
+      - name: devcontainer CLI インストール (amd64のみ)
+        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
+        run: npm install -g @devcontainers/cli
+
+      - name: devcontainerイメージ起動テスト (amd64)
+        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
+        run: |
+          set -e
+          IMAGE=${{ steps.wait-for-image.outputs.image }}
+          echo "[INFO] devcontainerイメージ起動テスト: $IMAGE (amd64)"
+          if ! devcontainer up --workspace-folder . --image "$IMAGE"; then
+            echo "::error ::devcontainer up failed for $IMAGE (amd64)"
+            exit 1
+          fi
+
+      - name: arm64イメージ起動テスト (docker run)
+        if: matrix.arch == 'arm64' && steps.wait-for-image.outputs.found == 'true'
+        shell: bash
+        run: |
+          IMAGE=${{ steps.wait-for-image.outputs.image }}
+          echo "[INFO] arm64イメージ起動テスト: $IMAGE (arm64)"
+          set +e
+          docker run --rm --platform linux/arm64 "$IMAGE" uname -m
+          STATUS=$?
+          if [ $STATUS -ne 0 ]; then
+            echo "::error ::Failed to run $IMAGE on arm64. Exit code: $STATUS"
+            exit $STATUS
+          fi
+
+      - name: テスト失敗時のエラーハンドリング
+        if: failure()
+        run: |
+          echo "::error ::devcontainerイメージ起動テストでエラーが発生しました。"
+          # 必要に応じて通知等を追加
