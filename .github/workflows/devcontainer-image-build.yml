@@ -17,7 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MAX_RETRIES: 18
+  # リトライ回数や間隔はここで一元管理可能
+  MAX_RETRIES: 18  # 3分間
   RETRY_INTERVAL: 10
 
 jobs:
@@ -68,17 +69,14 @@ jobs:
         run: |
           set -e
           echo "[INFO] devcontainerディレクトリ検出開始"
-          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d | while read d; do
-            if [ -f "$d/devcontainer.json" ] || [ -f "$d/.devcontainer/devcontainer.json" ]; then
-              basename "$d"
-            fi
-          done)
+          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d \( -exec test -f '{}/devcontainer.json' \; -o -exec test -f '{}/.devcontainer/devcontainer.json' \; \) -print)
           if [ -z "$dirs" ]; then
             echo "[WARNING] devcontainerディレクトリ未検出"
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            matrix=$(printf '%s\n' $dirs | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]' | tr -d '\n')
+            # 1行JSONで出力
+            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]' | tr -d '\n')
             echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
 
@@ -117,6 +115,7 @@ jobs:
         id: meta
         run: |
           set -e
+          echo "[INFO] イメージ名・タグ生成開始"
           DIR="${{ matrix.dir }}"
           NAME="${{ matrix.name }}"
           REPO="ghcr.io/${{ github.repository_owner }}/common"
@@ -133,29 +132,24 @@ jobs:
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "dir=$DIR" >> $GITHUB_OUTPUT
 
-      - name: マルチプラットフォームビルド＆プッシュ
-        run: |
-          set -e
-          DIR="${{ steps.meta.outputs.dir }}"
-          REPO="${{ steps.meta.outputs.repo }}"
-          TAGS="${{ steps.meta.outputs.tags }}"
-          TAG_ARGS=""
-          for TAG in $(echo $TAGS | tr ',' ' '); do
-            TAG_ARGS="$TAG_ARGS -t $REPO:$TAG"
-          done
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --push \
-            $TAG_ARGS \
-            $DIR
+      - name: devcontainers/ciによるビルド・プッシュ
+        uses: devcontainers/ci@v0.3
+        with:
+          subFolder: ${{ matrix.dir }}
+          imageName: ${{ steps.meta.outputs.repo }}
+          imageTag: ${{ steps.meta.outputs.tags }}
+          platform: linux/amd64,linux/arm64
+          push: always
 
       - name: matrix用タグ情報生成
         id: gen-tags
         shell: bash
         run: |
+          # 1ジョブ1dirなので {dir, name, tag} を1件出す
           printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.main_tag }}" > tags-matrix.json
           echo "tags-matrix=$(cat tags-matrix.json)" >> $GITHUB_OUTPUT
 
+  # 各イメージ（dir/tagごと）でテスト
   test-devcontainer:
     name: devcontainerイメージ起動テスト
     needs: build-and-push
@@ -190,9 +184,7 @@ jobs:
           ARCH=${{ matrix.arch }}
           echo "[INFO] Start polling manifest for $IMAGE ($ARCH)"
           for i in $(seq 1 "${MAX_RETRIES}"); do
-            if docker manifest inspect "$IMAGE" 2>/dev/null | jq -e --arg arch "$ARCH" '
-              .manifests[]? | select(.platform.architecture == $arch)
-            ' > /dev/null; then
+            if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "$ARCH"; then
               echo "found=true" >> $GITHUB_OUTPUT
               echo "image=$IMAGE" >> $GITHUB_OUTPUT
               exit 0
@@ -239,3 +231,4 @@ jobs:
         if: failure()
         run: |
           echo "::error ::devcontainerイメージ起動テストでエラーが発生しました。"
+          # 必要に応じて通知等を
