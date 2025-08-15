@@ -1,61 +1,34 @@
 name: devcontainerイメージ自動ビルド・起動テスト
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'devcontainers/**'
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
-    paths:
-      - 'devcontainers/**'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      search_path:
+        required: false
+        type: string
+        default: devcontainers
+      prefix:
+        required: false
+        type: string
+        default: devcontainer
+      tag:
+        required: false
+        type: string
+      safix:
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # リトライ回数や間隔はここで一元管理可能
-  MAX_RETRIES: 18  # 3分間
+  MAX_RETRIES: 18
   RETRY_INTERVAL: 10
 
 jobs:
-  check-changes:
-    name: 差分チェック
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.filter.outputs.changed }}
-    steps:
-      - name: コードチェックアウト
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: main取得
-        run: git fetch origin main
-
-      - name: devcontainers配下の差分判定
-        id: filter
-        run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "[INFO] mainブランチpushのため常にビルド"
-          else
-            if git diff --name-only origin/main...HEAD | grep -q '^devcontainers/'; then
-              echo "changed=true" >> $GITHUB_OUTPUT
-              echo "[INFO] devcontainers配下に差分あり"
-            else
-              echo "changed=false" >> $GITHUB_OUTPUT
-              echo "[INFO] devcontainers配下に差分なし"
-            fi
-          fi
-
   detect-devcontainers:
     name: devcontainerディレクトリ検出
-    needs: check-changes
-    if: needs.check-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -63,22 +36,67 @@ jobs:
       - name: コードチェックアウト
         uses: actions/checkout@v4
 
-      - name: devcontainerディレクトリ検出
+      - name: devcontainerディレクトリ検出とタグ生成
         id: set-matrix
         shell: bash
         run: |
           set -e
-          echo "[INFO] devcontainerディレクトリ検出開始"
-          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d \( -exec test -f '{}/devcontainer.json' \; -o -exec test -f '{}/.devcontainer/devcontainer.json' \; \) -print)
-          if [ -z "$dirs" ]; then
-            echo "[WARNING] devcontainerディレクトリ未検出"
-            echo "matrix=[]" >> $GITHUB_OUTPUT
+          SEARCH_PATH="${{ inputs.search_path }}"
+          USER_PREFIX="${{ inputs.prefix }}"
+          USER_TAG="${{ inputs.tag }}"
+          USER_SAFIX="${{ inputs.safix }}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+
+          # safixの決定
+          if [ -n "$USER_SAFIX" ]; then
+            SAFIX="$USER_SAFIX"
           else
-            echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            # 1行JSONで出力
-            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]' | tr -d '\n')
-            echo "matrix=$matrix" >> $GITHUB_OUTPUT
+            if [[ "${GITHUB_HEAD_REF}" =~ ^release-please ]]; then
+              SAFIX="pre"
+            elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+              git fetch --tags
+              SAFIX=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+            else
+              SAFIX="pre"
+            fi
           fi
+
+          # .devcontainer/devcontainer.json を全探索
+          mapfile -t found < <(find "$SEARCH_PATH" -type f -path '*/.devcontainer/devcontainer.json' 2>/dev/null || true)
+
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "[WARNING] devcontainer未検出"
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "[" > matrix.json
+          first=1
+          for path in "${found[@]}"; do
+            parent_dir=$(dirname "$(dirname "$path")")
+            if [ "$parent_dir" = "." ] || [ "$parent_dir" = "/" ]; then
+              default_tag="$REPO_NAME"
+              dir="."
+            else
+              default_tag=$(basename "$parent_dir")
+              dir="$parent_dir"
+            fi
+            # tagは呼び出し側指定があればそれを優先
+            if [ -n "$USER_TAG" ]; then
+              tag="$USER_TAG"
+            else
+              tag="$default_tag"
+            fi
+            prefix="$USER_PREFIX"
+            safix="$SAFIX"
+            full_tag="${prefix}-${tag}-${safix}"
+            [ $first -eq 0 ] && echo "," >> matrix.json
+            echo -n "{\"dir\":\"$dir\",\"name\":\"$tag\",\"tag\":\"$full_tag\"}" >> matrix.json
+            first=0
+          done
+          echo "]" >> matrix.json
+          matrix=$(cat matrix.json)
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
 
   build-and-push:
     name: devcontainerイメージビルド・プッシュ
@@ -115,20 +133,13 @@ jobs:
         id: meta
         run: |
           set -e
-          echo "[INFO] イメージ名・タグ生成開始"
           DIR="${{ matrix.dir }}"
           NAME="${{ matrix.name }}"
-          REPO="ghcr.io/${{ github.repository_owner }}/common"
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            TAGS="devcontainer-${NAME}-latest,devcontainer-${NAME}-$(date +%Y%m%d%H%M%S)"
-            MAIN_TAG="devcontainer-${NAME}-latest"
-          else
-            TAGS="devcontainer-${NAME}-pre"
-            MAIN_TAG="devcontainer-${NAME}-pre"
-          fi
+          TAG="${{ matrix.tag }}"
+          REPO="ghcr.io/${{ github.repository_owner }}/${{ github.repository }}"
+          echo "[INFO] イメージ名・タグ生成: $REPO:$TAG"
           echo "repo=$REPO" >> $GITHUB_OUTPUT
-          echo "tags=$TAGS" >> $GITHUB_OUTPUT
-          echo "main_tag=$MAIN_TAG" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "dir=$DIR" >> $GITHUB_OUTPUT
 
@@ -137,19 +148,17 @@ jobs:
         with:
           subFolder: ${{ matrix.dir }}
           imageName: ${{ steps.meta.outputs.repo }}
-          imageTag: ${{ steps.meta.outputs.tags }}
-          platform: linux/amd64,linux/arm64
+          imageTag: ${{ steps.meta.outputs.tag }}
+          platform: linux/amd64
           push: always
 
       - name: matrix用タグ情報生成
         id: gen-tags
         shell: bash
         run: |
-          # 1ジョブ1dirなので {dir, name, tag} を1件出す
-          printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.main_tag }}" > tags-matrix.json
+          printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.tag }}" > tags-matrix.json
           echo "tags-matrix=$(cat tags-matrix.json)" >> $GITHUB_OUTPUT
 
-  # 各イメージ（dir/tagごと）でテスト
   test-devcontainer:
     name: devcontainerイメージ起動テスト
     needs: build-and-push
@@ -159,14 +168,9 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.build-and-push.outputs.tags-matrix) }}
-        arch: [amd64, arm64]
     steps:
       - name: コードチェックアウト
         uses: actions/checkout@v4
-
-      - name: QEMUセットアップ (arm64のみ)
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
 
       - name: Dockerログイン
         uses: docker/login-action@v3
@@ -180,55 +184,48 @@ jobs:
         shell: bash
         run: |
           set -e
-          IMAGE=ghcr.io/${{ github.repository_owner }}/common:${{ matrix.tag }}
-          ARCH=${{ matrix.arch }}
-          echo "[INFO] Start polling manifest for $IMAGE ($ARCH)"
+          IMAGE=ghcr.io/${{ github.repository_owner }}/${{ github.repository }}:${{ matrix.tag }}
+          echo "[INFO] Start polling manifest for $IMAGE (amd64)"
           for i in $(seq 1 "${MAX_RETRIES}"); do
-            if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "$ARCH"; then
+            if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "amd64"; then
               echo "found=true" >> $GITHUB_OUTPUT
               echo "image=$IMAGE" >> $GITHUB_OUTPUT
               exit 0
             else
-              echo "[WARNING] $IMAGE for $ARCH not found yet. Retry $i/${MAX_RETRIES}..."
+              echo "[WARNING] $IMAGE for amd64 not found yet. Retry $i/${MAX_RETRIES}..."
               sleep "${RETRY_INTERVAL}"
             fi
           done
           echo "found=false" >> $GITHUB_OUTPUT
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "::error ::Docker image $IMAGE ($ARCH) was not found after $((MAX_RETRIES*RETRY_INTERVAL)) seconds."
+          echo "::error ::Docker image $IMAGE (amd64) was not found after $((MAX_RETRIES*RETRY_INTERVAL)) seconds."
           exit 1
 
-      - name: devcontainer CLI インストール (amd64のみ)
-        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
+      - name: devcontainer CLI インストール
+        if: steps.wait-for-image.outputs.found == 'true'
         run: npm install -g @devcontainers/cli
 
-      - name: devcontainerイメージ起動テスト (amd64)
-        if: matrix.arch == 'amd64' && steps.wait-for-image.outputs.found == 'true'
+      - name: devcontainerイメージ起動テスト
+        if: steps.wait-for-image.outputs.found == 'true'
+        shell: bash
         run: |
           set -e
           IMAGE=${{ steps.wait-for-image.outputs.image }}
           echo "[INFO] devcontainerイメージ起動テスト: $IMAGE (amd64)"
-          if ! devcontainer up --workspace-folder . --image "$IMAGE"; then
+          CONTAINER_ID=""
+          trap 'if [ -n "$CONTAINER_ID" ]; then echo "[INFO] docker logs for $CONTAINER_ID:"; docker logs "$CONTAINER_ID" || true; fi' ERR
+          # devcontainer upで起動したコンテナIDを取得
+          CONTAINER_ID=$(devcontainer up --workspace-folder . --image-name "$IMAGE" --id-label test-run=$(date +%s) 2>&1 | tee /tmp/devcontainer-up.log | grep -oE 'Started container: [a-z0-9]+' | awk '{print $3}' || true)
+          if grep -q "Error" /tmp/devcontainer-up.log; then
             echo "::error ::devcontainer up failed for $IMAGE (amd64)"
+            if [ -n "$CONTAINER_ID" ]; then
+              echo "[INFO] docker logs for $CONTAINER_ID:"
+              docker logs "$CONTAINER_ID" || true
+            fi
             exit 1
-          fi
-
-      - name: arm64イメージ起動テスト (docker run)
-        if: matrix.arch == 'arm64' && steps.wait-for-image.outputs.found == 'true'
-        shell: bash
-        run: |
-          IMAGE=${{ steps.wait-for-image.outputs.image }}
-          echo "[INFO] arm64イメージ起動テスト: $IMAGE (arm64)"
-          set +e
-          docker run --rm --platform linux/arm64 "$IMAGE" uname -m
-          STATUS=$?
-          if [ $STATUS -ne 0 ]; then
-            echo "::error ::Failed to run $IMAGE on arm64. Exit code: $STATUS"
-            exit $STATUS
           fi
 
       - name: テスト失敗時のエラーハンドリング
         if: failure()
         run: |
           echo "::error ::devcontainerイメージ起動テストでエラーが発生しました。"
-          # 必要に応じて通知等を追加
