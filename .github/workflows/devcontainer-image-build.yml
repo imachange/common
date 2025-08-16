@@ -183,8 +183,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 差分devcontainerディレクトリ検出
-        id: set-matrix
-        shell: bash
         run: |
           set -e
           SEARCH_PATTERN="${{ inputs.search_pattern }}"
@@ -193,8 +191,7 @@ jobs:
           for dir in $changed_dirs; do
             for p in $SEARCH_PATTERN; do
               if [ -f "$dir/$p" ]; then
-                found="$found
-$dir"
+                found="${found}"$'\n'"$dir"
               fi
             done
           done
