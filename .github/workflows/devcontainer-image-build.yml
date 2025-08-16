@@ -43,7 +43,7 @@ on:
         description: "イメージをpushするタイミング（never, filter, always）"
         required: false
         type: string
-        default: filter
+        default: always
       platform:
         description: "ビルド対象プラットフォーム（カンマ区切り、例: linux/amd64,linux/arm64）"
         required: false
