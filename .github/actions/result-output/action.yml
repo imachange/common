@@ -1,0 +1,67 @@
+name: "Result Output"
+description: "任意の結果・メッセージをGITHUB_OUTPUTに出力"
+inputs:
+  outcome:
+    description: "成功判定値（successなら成功）"
+    required: true
+  success_result:
+    description: "成功時のresult値"
+    required: false
+    default: success
+  failure_result:
+    description: "失敗時のresult値"
+    required: false
+    default: failure
+  success_message:
+    description: "成功時のメッセージ"
+    required: false
+    default: "✅ 成功"
+  failure_message:
+    description: "失敗時のメッセージ"
+    required: false
+    default: "❌ 失敗"
+  success_outputs:
+    description: "成功時に追加で出力するkey=value（改行区切り）"
+    required: false
+    default: ""
+  failure_outputs:
+    description: "失敗時に追加で出力するkey=value（改行区切り）"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - id: result
+      shell: bash
+      run: |
+        # 共通URL
+        RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        JOB_URL="$RUN_URL"
+        {
+          JOBS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs")
+          JOB_ID=$(echo "$JOBS_JSON" | grep -B 10 "\"name\":\"${GITHUB_JOB}\"" | grep '"id":' | head -n1 | awk '{print $2}' | tr -d ',')
+          if [ -n "$JOB_ID" ]; then
+            JOB_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/$JOB_ID"
+          fi
+        } || true
+
+        if [ "${{ inputs.outcome }}" = "success" ]; then
+          echo "result=${{ inputs.success_result }}" >> $GITHUB_OUTPUT
+          echo "message=${{ inputs.success_message }}: $RUN_URL" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.success_outputs }}" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "$line" >> $GITHUB_OUTPUT
+            done <<< "${{ inputs.success_outputs }}"
+          fi
+        else
+          echo "result=${{ inputs.failure_result }}" >> $GITHUB_OUTPUT
+          echo "message=${{ inputs.failure_message }}: $RUN_URL ジョブ: $JOB_URL" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.failure_outputs }}" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "$line" >> $GITHUB_OUTPUT
+            done <<< "${{ inputs.failure_outputs }}"
+          fi
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
