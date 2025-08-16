@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   call-build-workflow:
+    runs-on: ubuntu-latest 
     steps:
       - name: devcontainerイメージビルド・プッシュ
         id: devci
