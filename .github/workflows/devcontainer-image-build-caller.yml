@@ -17,11 +17,23 @@ permissions:
   packages: write
 
 jobs:
-  call-build-workflow:
+  build:
     uses: ./.github/workflows/devcontainer-image-build.yml
+    secrets: inherit # 必要なら
     with:
       search_path: devcontainers
-      # 必要に応じて以下も指定可能
-      # prefix: devcontainer
-      # tag: ""
-      # safix: ""
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    steps:
+      - name: 通知・結果出力
+        run: |
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ needs.build.result }}" = "success" ]; then
+            echo "✅ 成功: $RUN_URL"
+          else
+            echo "❌ 失敗: $RUN_URL"
+            exit 1
+          fi

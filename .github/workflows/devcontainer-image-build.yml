@@ -3,17 +3,124 @@ name: devcontainerイメージ自動ビルド・起動テスト
 on:
   workflow_call:
     inputs:
-      search_path:
+      imageName:
+        description: "ビルドするdevcontainerイメージ名（空の場合はghcr.io/owner/repo）"
         required: false
         type: string
+        default: ghcr.io/${{ github.repository }}
+      imageTag:
+        description: |
+          イメージタグ（カンマ区切り可、プレースホルダー利用可）
+          利用可能なプレースホルダー:
+            {date}      ... YYYYMMDD
+            {datetime}  ... YYYYMMDD-HHMMSS
+            {gitTag}    ... gitのタグ名（タグpush時のみ）
+            {gitSha}    ... コミットSHA
+            {shortSha}  ... コミットSHA短縮（8桁）
+            {branch}    ... ブランチ名
+            {repo}      ... リポジトリ名
+            {owner}     ... リポジトリオーナー
+            {name}      ... devcontainerディレクトリ名
+        required: false
+        type: string
+        default: ""
+      configFile:
+        description: "devcontainer.jsonのパス（例: .devcontainer/devcontainer.json や folderA/devcontainer.json など）"
+        required: false
+        type: string
+        default: ""
+      runCmd:
+        description: "ビルド後にdevcontainer内で実行するコマンド（全アーキテクチャで動作する内容を推奨）"
+        required: false
+        type: string
+        default: echo "DevContainer build succeeded"
+      env:
+        description: "devcontainer実行時に渡す環境変数（改行区切り）"
+        required: false
+        type: string
+        default: ""
+      push:
+        description: "イメージをpushするタイミング（never, filter, always）"
+        required: false
+        type: string
+        default: always
+      platform:
+        description: "ビルド対象プラットフォーム（カンマ区切り、例: linux/amd64,linux/arm64）"
+        required: false
+        type: string
+        default: linux/amd64,linux/arm64
+      cacheFrom:
+        description: "ビルドキャッシュ用イメージ"
+        required: false
+        type: string
+        default: ""
+      noCache:
+        description: "キャッシュを使わずビルドするか"
+        required: false
+        type: boolean
+        default: false
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+      # === ワークフロー独自inputs ===
+      check_diff:
+        description: "差分チェックを行うかどうか"
+        required: false
+        type: boolean
+        default: true
+      diff_pattern:
+        description: "差分チェック時のgrepパターン"
+        required: false
+        type: string
+        default: '\.devcontainer/'
+      search_path:
+        description: "devcontainer探索の親ディレクトリ"
+        required: false
+        type: string
+        default: "."
+      recursive_search:
+        description: "再帰的に探索するかどうか"
+        required: false
+        type: boolean
+        default: false
+      search_pattern:
+        description: "devcontainer探索時のfindパターン"
+        required: false
+        type: string
+        default: 'devcontainer.json .devcontainer/devcontainer.json'
+      exclude_path:
+        description: "除外したいディレクトリ（スペース区切りで複数指定可）"
+        required: false
+        type: string
+        default: ""
+      exclude_pattern:
+        description: "除外したいパターン（grep互換、スペース区切りで複数指定可）"
+        required: false
+        type: string
+        default: ""
+      max_retries:
+        description: "イメージpullリトライ回数"
+        required: false
+        type: number
+        default: 18
+      retry_interval:
+        description: "イメージpullリトライ間隔（秒）"
+        required: false
+        type: number
+        default: 10
+
+    outputs:
+      result:
+        description: "ビルド・テストの結果（success/failure）"
+        value: ${{ jobs.build-and-push.outputs.result }}
+      image_url:
+        description: "作成したイメージのURL（成功時のみ）"
+        value: ${{ jobs.build-and-push.outputs.image_url }}
+      error_message:
+        description: "失敗時のエラーメッセージ"
+        value: ${{ jobs.build-and-push.outputs.error_message }}
 
 env:
-  MAX_RETRIES: 18  # 3分間
-  RETRY_INTERVAL: 10
+  MAX_RETRIES: ${{ inputs.max_retries }}
+  RETRY_INTERVAL: ${{ inputs.retry_interval }}
 
 jobs:
   check-changes:
@@ -30,19 +137,27 @@ jobs:
       - name: main取得
         run: git fetch origin main
 
-      - name: devcontainers配下の差分判定
+      - name: 差分判定
         id: filter
         run: |
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          set -e
+          if [[ "${{ inputs.check_diff }}" == "false" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "[INFO] 差分チェック無効化のため常にビルド"
+          elif [[ -z "${{ inputs.diff_pattern }}" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "[INFO] diff_pattern未指定のため常にビルド"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "[INFO] mainブランチpushのため常にビルド"
           else
-            if git diff --name-only origin/main...HEAD | grep -q '^devcontainers/'; then
+            DIFF_PATTERN="${{ inputs.diff_pattern }}"
+            if git diff --name-only origin/main...HEAD | grep -q "$DIFF_PATTERN"; then
               echo "changed=true" >> $GITHUB_OUTPUT
-              echo "[INFO] devcontainers配下に差分あり"
+              echo "[INFO] ${DIFF_PATTERN}配下に差分あり"
             else
               echo "changed=false" >> $GITHUB_OUTPUT
-              echo "[INFO] devcontainers配下に差分なし"
+              echo "[INFO] ${DIFF_PATTERN}配下に差分なし"
             fi
           fi
 
@@ -62,14 +177,47 @@ jobs:
         shell: bash
         run: |
           set -e
-          echo "[INFO] devcontainerディレクトリ検出開始"
-          dirs=$(find devcontainers -mindepth 1 -maxdepth 1 -type d \( -exec test -f '{}/devcontainer.json' \; -o -exec test -f '{}/.devcontainer/devcontainer.json' \; \) -print)
+          SEARCH_PATH="${{ inputs.search_path }}"
+          SEARCH_PATTERN="${{ inputs.search_pattern }}"
+          RECURSIVE="${{ inputs.recursive_search }}"
+          EXCLUDE_PATH="${{ inputs.exclude_path }}"
+          EXCLUDE_PATTERN="${{ inputs.exclude_pattern }}"
+
+          if [[ "$RECURSIVE" == "true" ]]; then
+            FIND_DEPTH=""
+          else
+            FIND_DEPTH="-mindepth 1 -maxdepth 1"
+          fi
+
+          FIND_EXPR=""
+          for p in $SEARCH_PATTERN; do
+            FIND_EXPR="$FIND_EXPR -exec test -f '{}/$p' \; -o"
+          done
+          FIND_EXPR="${FIND_EXPR% -o}"
+
+          # 除外ディレクトリの組み立て
+          PRUNE_EXPR=""
+          for ex in $EXCLUDE_PATH; do
+            PRUNE_EXPR="$PRUNE_EXPR -path \"$SEARCH_PATH/$ex\" -prune -o"
+          done
+
+          # findコマンドの組み立て
+          FIND_CMD="find \"$SEARCH_PATH\" $FIND_DEPTH $PRUNE_EXPR -type d \\( $FIND_EXPR \\) -print"
+          dirs=$(eval $FIND_CMD || true)
+
+          # 除外パターン（grep）でフィルタ
+          if [[ -n "$EXCLUDE_PATTERN" && -n "$dirs" ]]; then
+            for pat in $EXCLUDE_PATTERN; do
+              dirs=$(echo "$dirs" | grep -v "$pat" || true)
+            done
+          fi
+
           if [ -z "$dirs" ]; then
             echo "[WARNING] devcontainerディレクトリ未検出"
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            matrix=$(printf '%s\n' $dirs | xargs -n1 basename | jq -Rn '[inputs | {dir: "devcontainers/\(.)", name: .}]' | tr -d '\n')
+            matrix=$(printf '%s\n' $dirs | jq -Rn '[inputs | {dir: . , name: (.|split("/")|.[-1])}]' | tr -d '\n')
             echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
 
@@ -86,7 +234,9 @@ jobs:
       contents: read
       packages: write
     outputs:
-      tags-matrix: ${{ steps.gen-tags.outputs.tags-matrix }}
+      result: ${{ steps.set-result.outputs.result }}
+      image_url: ${{ steps.set-result.outputs.image_url }}
+      error_message: ${{ steps.set-result.outputs.error_message }}
     steps:
       - name: コードチェックアウト
         uses: actions/checkout@v4
@@ -104,108 +254,100 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: イメージ名・タグ生成
+      - name: タグ用値生成
+        id: tagvars
+        run: |
+          set -e
+          DATE=$(date +%Y%m%d)
+          DATETIME=$(date +%Y%m%d-%H%M%S)
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+          GIT_SHA=$(git rev-parse HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BRANCH="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          NAME="${{ matrix.name }}"
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "datetime=$DATETIME" >> $GITHUB_OUTPUT
+          echo "gitTag=$GIT_TAG" >> $GITHUB_OUTPUT
+          echo "gitSha=$GIT_SHA" >> $GITHUB_OUTPUT
+          echo "shortSha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "owner=$OWNER" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: タグ置換・分岐
         id: meta
         run: |
           set -e
-          echo "[INFO] イメージ名・タグ生成開始"
-          DIR="${{ matrix.dir }}"
-          NAME="${{ matrix.name }}"
-          REPO="ghcr.io/${{ github.repository_owner }}/common"
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            TAGS="devcontainer-${NAME}-latest,devcontainer-${NAME}-$(date +%Y%m%d%H%M%S)"
-            MAIN_TAG="devcontainer-${NAME}-latest"
-          else
-            TAGS="devcontainer-${NAME}-pre"
-            MAIN_TAG="devcontainer-${NAME}-pre"
+          TAGS="${{ inputs.imageTag }}"
+          if [ -z "$TAGS" ]; then
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              TAGS="latest"
+            else
+              TAGS="pre"
+            fi
           fi
-          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          # プレースホルダー置換
+          TAGS="${TAGS//\{date\}/${{ steps.tagvars.outputs.date }}}"
+          TAGS="${TAGS//\{datetime\}/${{ steps.tagvars.outputs.datetime }}}"
+          TAGS="${TAGS//\{gitTag\}/${{ steps.tagvars.outputs.gitTag }}}"
+          TAGS="${TAGS//\{gitSha\}/${{ steps.tagvars.outputs.gitSha }}}"
+          TAGS="${TAGS//\{shortSha\}/${{ steps.tagvars.outputs.shortSha }}}"
+          TAGS="${TAGS//\{branch\}/${{ steps.tagvars.outputs.branch }}}"
+          TAGS="${TAGS//\{repo\}/${{ steps.tagvars.outputs.repo }}}"
+          TAGS="${TAGS//\{owner\}/${{ steps.tagvars.outputs.owner }}}"
+          TAGS="${TAGS//\{name\}/${{ steps.tagvars.outputs.name }}}"
+          TAGS="${TAGS//\{latest\}/latest}"
+          # 空要素や重複カンマを除去
+          TAGS=$(echo "$TAGS" | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
+          MAIN_TAG=$(echo "$TAGS" | cut -d, -f1)
+          echo "repo=${{ inputs.imageName }}" >> $GITHUB_OUTPUT
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
           echo "main_tag=$MAIN_TAG" >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "dir=$DIR" >> $GITHUB_OUTPUT
+          echo "name=${{ matrix.name }}" >> $GITHUB_OUTPUT
+          echo "dir=${{ matrix.dir }}" >> $GITHUB_OUTPUT
 
-      - name: devcontainers/ciによるビルド・プッシュ
+      - name: devcontainers/ciによるビルド・プッシュ・テスト
+        id: devci
         uses: devcontainers/ci@v0.3
         with:
-          subFolder: ${{ matrix.dir }}
           imageName: ${{ steps.meta.outputs.repo }}
           imageTag: ${{ steps.meta.outputs.tags }}
-          platform: linux/amd64,linux/arm64
-          push: always
+          subFolder: ${{ matrix.dir }}
+          configFile: ${{ inputs.configFile }}
+          runCmd: ${{ inputs.runCmd }}
+          env: ${{ inputs.env }}
+          push: ${{ inputs.push }}
+          platform: ${{ inputs.platform }}
+          cacheFrom: ${{ inputs.cacheFrom }}
+          noCache: ${{ inputs.noCache }}
+        continue-on-error: true
 
-      - name: matrix用タグ情報生成
-        id: gen-tags
-        shell: bash
+      - name: 結果出力
+        id: set-result
         run: |
-          printf '[{"dir":"%s","name":"%s","tag":"%s"}]' "${{ matrix.dir }}" "${{ matrix.name }}" "${{ steps.meta.outputs.main_tag }}" > tags-matrix.json
-          echo "tags-matrix=$(cat tags-matrix.json)" >> $GITHUB_OUTPUT
-
-  test-devcontainer:
-    name: devcontainerイメージ起動テスト
-    needs: build-and-push
-    if: needs.build-and-push.outputs.tags-matrix != ''
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.build-and-push.outputs.tags-matrix) }}
-        arch: [amd64, arm64]
-    steps:
-      - name: コードチェックアウト
-        uses: actions/checkout@v4
-
-      - name: QEMUセットアップ (arm64のみ)
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Dockerログイン
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: イメージがpull可能になるまでリトライ
-        id: wait-for-image
-        shell: bash
-        run: |
-          set -e
-          IMAGE=ghcr.io/${{ github.repository_owner }}/common:${{ matrix.tag }}
-          ARCH=${{ matrix.arch }}
-          echo "[INFO] Start polling manifest for $IMAGE ($ARCH)"
-          for i in $(seq 1 "${MAX_RETRIES}"); do
-            if docker manifest inspect "$IMAGE" 2>/dev/null | grep -q "$ARCH"; then
-              echo "found=true" >> $GITHUB_OUTPUT
-              echo "image=$IMAGE" >> $GITHUB_OUTPUT
-              exit 0
-            else
-              echo "[WARNING] $IMAGE for $ARCH not found yet. Retry $i/${MAX_RETRIES}..."
-              sleep "${RETRY_INTERVAL}"
+          # ワークフロー全体のURL
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # このジョブのURL（API取得は失敗しても無視）
+          JOB_URL="$RUN_URL"
+          {
+            JOBS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs")
+            JOB_ID=$(echo "$JOBS_JSON" | grep -B 10 "\"name\":\"${GITHUB_JOB}\"" | grep '"id":' | head -n1 | awk '{print $2}' | tr -d ',')
+            if [ -n "$JOB_ID" ]; then
+              JOB_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/$JOB_ID"
             fi
-          done
-          echo "found=false" >> $GITHUB_OUTPUT
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "::error ::Docker image $IMAGE ($ARCH) was not found after $((MAX_RETRIES*RETRY_INTERVAL)) seconds."
-          exit 1
+          } || true
 
-      - name: イメージ起動テスト (docker run)
-        if: steps.wait-for-image.outputs.found == 'true'
-        shell: bash
-        run: |
-          IMAGE=${{ steps.wait-for-image.outputs.image }}
-          ARCH=${{ matrix.arch }}
-          echo "[INFO] イメージ起動テスト: $IMAGE ($ARCH)"
-          set +e
-          docker run --rm --platform linux/$ARCH "$IMAGE" uname -m
-          STATUS=$?
-          if [ $STATUS -ne 0 ]; then
-            echo "::error ::Failed to run $IMAGE on $ARCH. Exit code: $STATUS"
-            exit $STATUS
+          if [ "${{ steps.devci.outcome }}" = "success" ]; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            echo "image_url=${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.main_tag }}" >> $GITHUB_OUTPUT
+            echo "error_message=✅ 成功: $RUN_URL" >> $GITHUB_OUTPUT
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+            echo "image_url=" >> $GITHUB_OUTPUT
+            echo "error_message=❌ 失敗: $RUN_URL ジョブ: $JOB_URL" >> $GITHUB_OUTPUT
           fi
-
-      - name: テスト失敗時のエラーハンドリング
-        if: failure()
-        run: |
-          echo "::error ::devcontainerイメージ起動テストでエラーが発生しました。"
-          # 必要に応じて通知等
+        continue-on-error: true
