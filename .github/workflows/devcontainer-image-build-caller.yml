@@ -18,10 +18,20 @@ permissions:
 
 jobs:
   call-build-workflow:
-    uses: ./.github/workflows/devcontainer-image-build.yml
-    with:
-      search_path: devcontainers
-      # 必要に応じて以下も指定可能
-      # prefix: devcontainer
-      # tag: ""
-      # safix: ""
+    steps:
+      - name: devcontainerイメージビルド・プッシュ
+        id: devci
+        uses: ./github/workflows/devcontainer-image-build.yml
+        continue-on-error: true # 失敗しても次の通知ステップは必ず実行
+
+      # 通知・結果出力（失敗時はexit 1でワークフローも失敗扱い）
+      - name: 通知・結果出力
+        run: |
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "${{ steps.devci.outcome }}" = "success" ]; then
+            echo "✅ 成功: $RUN_URL"
+          else
+            echo "❌ 失敗: $RUN_URL"
+            # ここで失敗扱い
+            exit 1
+          fi
