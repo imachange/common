@@ -20,7 +20,8 @@ jobs:
   build:
     uses: ./.github/workflows/devcontainer-image-build.yml
     secrets: inherit # 必要なら
-    # with: ... # 必要なinputsがあれば指定
+    with:
+      search_path: devcontainers
 
   notify:
     runs-on: ubuntu-latest
