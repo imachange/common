@@ -17,22 +17,22 @@ permissions:
   packages: write
 
 jobs:
-  call-build-workflow:
-    runs-on: ubuntu-latest 
-    steps:
-      - name: devcontainerイメージビルド・プッシュ
-        id: devci
-        uses: ./github/workflows/devcontainer-image-build.yml
-        continue-on-error: true # 失敗しても次の通知ステップは必ず実行
+  build:
+    uses: ./.github/workflows/devcontainer-image-build.yml
+    secrets: inherit # 必要なら
+    # with: ... # 必要なinputsがあれば指定
 
-      # 通知・結果出力（失敗時はexit 1でワークフローも失敗扱い）
+  notify:
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    steps:
       - name: 通知・結果出力
         run: |
           RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          if [ "${{ steps.devci.outcome }}" = "success" ]; then
+          if [ "${{ needs.build.result }}" = "success" ]; then
             echo "✅ 成功: $RUN_URL"
           else
             echo "❌ 失敗: $RUN_URL"
-            # ここで失敗扱い
             exit 1
           fi
