@@ -21,6 +21,7 @@ on:
             {repo}      ... リポジトリ名
             {owner}     ... リポジトリオーナー
             {name}      ... devcontainerディレクトリ名
+            {parent}    ... devcontainerディレクトリの一つ上のディレクトリ名（ルートや.devcontainer直下は空）
         required: false
         type: string
         default: ""
@@ -128,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.filter.outputs.changed }}
+      changed_dirs: ${{ steps.filter.outputs.changed_dirs }}
     steps:
       - name: コードチェックアウト
         uses: actions/checkout@v4
@@ -137,26 +139,34 @@ jobs:
       - name: main取得
         run: git fetch origin main
 
-      - name: 差分判定
+      - name: 差分判定と対象ディレクトリ抽出
         id: filter
         run: |
           set -e
+          DIFF_PATTERN="${{ inputs.diff_pattern }}"
           if [[ "${{ inputs.check_diff }}" == "false" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed_dirs=" >> $GITHUB_OUTPUT
             echo "[INFO] 差分チェック無効化のため常にビルド"
-          elif [[ -z "${{ inputs.diff_pattern }}" ]]; then
+          elif [[ -z "$DIFF_PATTERN" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed_dirs=" >> $GITHUB_OUTPUT
             echo "[INFO] diff_pattern未指定のため常にビルド"
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "changed_dirs=" >> $GITHUB_OUTPUT
             echo "[INFO] mainブランチpushのため常にビルド"
           else
-            DIFF_PATTERN="${{ inputs.diff_pattern }}"
-            if git diff --name-only origin/main...HEAD | grep -q "$DIFF_PATTERN"; then
+            changed_files=$(git diff --name-only origin/main...HEAD | grep "$DIFF_PATTERN" || true)
+            if [[ -n "$changed_files" ]]; then
               echo "changed=true" >> $GITHUB_OUTPUT
-              echo "[INFO] ${DIFF_PATTERN}配下に差分あり"
+              changed_dirs=$(echo "$changed_files" | xargs -n1 dirname | sort | uniq)
+              changed_dirs_json=$(printf '%s\n' $changed_dirs | jq -Rn '[inputs]')
+              echo "changed_dirs=$changed_dirs_json" >> $GITHUB_OUTPUT
+              echo "[INFO] 差分ディレクトリ: $changed_dirs"
             else
               echo "changed=false" >> $GITHUB_OUTPUT
+              echo "changed_dirs=[]" >> $GITHUB_OUTPUT
               echo "[INFO] ${DIFF_PATTERN}配下に差分なし"
             fi
           fi
@@ -172,52 +182,45 @@ jobs:
       - name: コードチェックアウト
         uses: actions/checkout@v4
 
-      - name: devcontainerディレクトリ検出
+      - name: 差分devcontainerディレクトリ検出
         id: set-matrix
         shell: bash
         run: |
           set -e
-          SEARCH_PATH="${{ inputs.search_path }}"
           SEARCH_PATTERN="${{ inputs.search_pattern }}"
-          RECURSIVE="${{ inputs.recursive_search }}"
-          EXCLUDE_PATH="${{ inputs.exclude_path }}"
-          EXCLUDE_PATTERN="${{ inputs.exclude_pattern }}"
-
-          if [[ "$RECURSIVE" == "true" ]]; then
-            FIND_DEPTH=""
-          else
-            FIND_DEPTH="-mindepth 1 -maxdepth 1"
-          fi
-
-          FIND_EXPR=""
-          for p in $SEARCH_PATTERN; do
-            FIND_EXPR="$FIND_EXPR -exec test -f '{}/$p' \; -o"
-          done
-          FIND_EXPR="${FIND_EXPR% -o}"
-
-          # 除外ディレクトリの組み立て
-          PRUNE_EXPR=""
-          for ex in $EXCLUDE_PATH; do
-            PRUNE_EXPR="$PRUNE_EXPR -path \"$SEARCH_PATH/$ex\" -prune -o"
-          done
-
-          # findコマンドの組み立て
-          FIND_CMD="find \"$SEARCH_PATH\" $FIND_DEPTH $PRUNE_EXPR -type d \\( $FIND_EXPR \\) -print"
-          dirs=$(eval $FIND_CMD || true)
-
-          # 除外パターン（grep）でフィルタ
-          if [[ -n "$EXCLUDE_PATTERN" && -n "$dirs" ]]; then
-            for pat in $EXCLUDE_PATTERN; do
-              dirs=$(echo "$dirs" | grep -v "$pat" || true)
+          changed_dirs=$(echo '${{ needs.check-changes.outputs.changed_dirs }}' | jq -r '.[]')
+          found=""
+          for dir in $changed_dirs; do
+            for p in $SEARCH_PATTERN; do
+              if [ -f "$dir/$p" ]; then
+                found="$found
+$dir"
+              fi
             done
-          fi
-
-          if [ -z "$dirs" ]; then
-            echo "[WARNING] devcontainerディレクトリ未検出"
+          done
+          found=$(echo "$found" | sort | uniq | grep -v '^$' || true)
+          if [ -z "$found" ]; then
+            echo "[WARNING] 差分devcontainerディレクトリ未検出"
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
-            echo "[INFO] devcontainerディレクトリ検出完了: $dirs"
-            matrix=$(printf '%s\n' $dirs | jq -Rn '[inputs | {dir: . , name: (.|split("/")|.[-1])}]' | tr -d '\n')
+            echo "[INFO] 差分devcontainerディレクトリ検出完了: $found"
+            matrix=$(printf '%s\n' $found | jq -Rn '
+              [inputs | 
+                {
+                  dir: .,
+                  name: (.|split("/")|.[-1]),
+                  parent: (
+                    if . == "." or . == "" then "" 
+                    else
+                      (if (.|split("/")|.[-1]) == ".devcontainer" then
+                        (.|split("/")[0:-2]|last // "")
+                      else
+                        (.|split("/")[0:-1]|last // "")
+                      end)
+                    end
+                  )
+                }
+              ]' | tr -d '\n')
             echo "matrix=$matrix" >> $GITHUB_OUTPUT
           fi
 
@@ -267,6 +270,7 @@ jobs:
           REPO="${GITHUB_REPOSITORY#*/}"
           OWNER="${GITHUB_REPOSITORY%/*}"
           NAME="${{ matrix.name }}"
+          PARENT="${{ matrix.parent }}"
           echo "date=$DATE" >> $GITHUB_OUTPUT
           echo "datetime=$DATETIME" >> $GITHUB_OUTPUT
           echo "gitTag=$GIT_TAG" >> $GITHUB_OUTPUT
@@ -276,32 +280,61 @@ jobs:
           echo "repo=$REPO" >> $GITHUB_OUTPUT
           echo "owner=$OWNER" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "parent=$PARENT" >> $GITHUB_OUTPUT
 
       - name: タグ置換・分岐
         id: meta
         run: |
           set -e
           TAGS="${{ inputs.imageTag }}"
-          if [ -z "$TAGS" ]; then
-            if [ "${{ github.ref_name }}" = "main" ]; then
-              TAGS="latest"
-            else
-              TAGS="pre"
-            fi
-          fi
-          # プレースホルダー置換
+
+          # 固定値のプレースホルダー置換
           TAGS="${TAGS//\{date\}/${{ steps.tagvars.outputs.date }}}"
           TAGS="${TAGS//\{datetime\}/${{ steps.tagvars.outputs.datetime }}}"
-          TAGS="${TAGS//\{gitTag\}/${{ steps.tagvars.outputs.gitTag }}}"
           TAGS="${TAGS//\{gitSha\}/${{ steps.tagvars.outputs.gitSha }}}"
           TAGS="${TAGS//\{shortSha\}/${{ steps.tagvars.outputs.shortSha }}}"
           TAGS="${TAGS//\{branch\}/${{ steps.tagvars.outputs.branch }}}"
           TAGS="${TAGS//\{repo\}/${{ steps.tagvars.outputs.repo }}}"
           TAGS="${TAGS//\{owner\}/${{ steps.tagvars.outputs.owner }}}"
           TAGS="${TAGS//\{name\}/${{ steps.tagvars.outputs.name }}}"
-          TAGS="${TAGS//\{latest\}/latest}"
+
+          # 空文字になりうるプレースホルダーの共通処理
+          for PLACEHOLDER in "parent" "gitTag"; do
+            VALUE="${{ steps.tagvars.outputs.${PLACEHOLDER} }}"
+            if [ -z "$VALUE" ]; then
+              TAGS=$(echo "$TAGS" | perl -pe "s/(^|[-_])\{$PLACEHOLDER\}([-_]|$)/\1\2/g")
+              TAGS=$(echo "$TAGS" | sed 's/--*/-/g; s/__*/_/g')
+              TAGS=$(echo "$TAGS" | sed 's/^[-_]*//; s/[-_]*$//')
+            else
+              TAGS="${TAGS//\{$PLACEHOLDER\}/$VALUE}"
+            fi
+          done
+
+          # 万が一残ったプレースホルダーも消す
+          TAGS=$(echo "$TAGS" | sed 's/{[^}]*}//g')
+
           # 空要素や重複カンマを除去
           TAGS=$(echo "$TAGS" | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
+
+          # すべて空になった場合はデフォルト値を再設定し再度処理
+          if [ -z "$TAGS" ]; then
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              TAGS="devcontainer-{parent}-latest"
+            else
+              TAGS="devcontainer-{parent}-pre"
+            fi
+            for PLACEHOLDER in "parent"; do
+              VALUE="${{ steps.tagvars.outputs.${PLACEHOLDER} }}"
+              if [ -z "$VALUE" ]; then
+                TAGS=$(echo "$TAGS" | perl -pe "s/(^|[-_])\{$PLACEHOLDER\}([-_]|$)/\1\2/g")
+                TAGS=$(echo "$TAGS" | sed 's/--*/-/g; s/__*/_/g')
+                TAGS=$(echo "$TAGS" | sed 's/^[-_]*//; s/[-_]*$//')
+              else
+                TAGS="${TAGS//\{$PLACEHOLDER\}/$VALUE}"
+              fi
+            done
+          fi
+
           MAIN_TAG=$(echo "$TAGS" | cut -d, -f1)
           echo "repo=${{ inputs.imageName }}" >> $GITHUB_OUTPUT
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
@@ -325,29 +358,28 @@ jobs:
           noCache: ${{ inputs.noCache }}
         continue-on-error: true
 
+      - name: ジョブURL取得
+        id: joburl
+        run: |
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          JOB_URL="$RUN_URL"
+          JOBS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs")
+          JOB_ID=$(echo "$JOBS_JSON" | grep -B 10 "\"name\":\"${GITHUB_JOB}\"" | grep '"id":' | head -n1 | awk '{print $2}' | tr -d ',')
+          if [ -n "$JOB_ID" ]; then
+            JOB_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/$JOB_ID"
+          fi
+          echo "run_url=$RUN_URL" >> $GITHUB_OUTPUT
+          echo "job_url=$JOB_URL" >> $GITHUB_OUTPUT
+
       - name: 結果出力
         id: set-result
-        run: |
-          # ワークフロー全体のURL
-          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # このジョブのURL（API取得は失敗しても無視）
-          JOB_URL="$RUN_URL"
-          {
-            JOBS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs")
-            JOB_ID=$(echo "$JOBS_JSON" | grep -B 10 "\"name\":\"${GITHUB_JOB}\"" | grep '"id":' | head -n1 | awk '{print $2}' | tr -d ',')
-            if [ -n "$JOB_ID" ]; then
-              JOB_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/$JOB_ID"
-            fi
-          } || true
-
-          if [ "${{ steps.devci.outcome }}" = "success" ]; then
-            echo "result=success" >> $GITHUB_OUTPUT
-            echo "image_url=${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.main_tag }}" >> $GITHUB_OUTPUT
-            echo "error_message=✅ 成功: $RUN_URL" >> $GITHUB_OUTPUT
-          else
-            echo "result=failure" >> $GITHUB_OUTPUT
-            echo "image_url=" >> $GITHUB_OUTPUT
-            echo "error_message=❌ 失敗: $RUN_URL ジョブ: $JOB_URL" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
+        uses: ./.github/actions/result-output
+        with:
+          outcome: ${{ steps.devci.outcome }}
+          run_url: ${{ steps.joburl.outputs.run_url }}
+          job_url: ${{ steps.joburl.outputs.job_url }}
+          success_outputs: |
+            image_url=${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.main_tag }}
+          failure_outputs: |
+            image_url=
