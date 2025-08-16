@@ -1,0 +1,61 @@
+name: "Result Output"
+description: "任意の結果・メッセージをGITHUB_OUTPUTに出力"
+inputs:
+  outcome:
+    description: "成功判定値（successなら成功）"
+    required: true
+  run_url:
+    description: "ワークフロー実行URL"
+    required: false
+    default: ""
+  job_url:
+    description: "ジョブURL"
+    required: false
+    default: ""
+  success_result:
+    description: "成功時のresult値"
+    required: false
+    default: success
+  failure_result:
+    description: "失敗時のresult値"
+    required: false
+    default: failure
+  success_message:
+    description: "成功時のメッセージ"
+    required: false
+    default: "✅ 成功"
+  failure_message:
+    description: "失敗時のメッセージ"
+    required: false
+    default: "❌ 失敗"
+  success_outputs:
+    description: "成功時に追加で出力するkey=value（改行区切り）"
+    required: false
+    default: ""
+  failure_outputs:
+    description: "失敗時に追加で出力するkey=value（改行区切り）"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - id: result
+      shell: bash
+      run: |
+        if [ "${{ inputs.outcome }}" = "success" ]; then
+          echo "result=${{ inputs.success_result }}" >> $GITHUB_OUTPUT
+          echo "error_message=${{ inputs.success_message }}: ${{ inputs.run_url }}" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.success_outputs }}" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "$line" >> $GITHUB_OUTPUT
+            done <<< "${{ inputs.success_outputs }}"
+          fi
+        else
+          echo "result=${{ inputs.failure_result }}" >> $GITHUB_OUTPUT
+          echo "error_message=${{ inputs.failure_message }}: ${{ inputs.run_url }} ジョブ: ${{ inputs.job_url }}" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.failure_outputs }}" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "$line" >> $GITHUB_OUTPUT
+            done <<< "${{ inputs.failure_outputs }}"
+          fi
+        fi

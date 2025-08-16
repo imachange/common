@@ -289,17 +289,27 @@ jobs:
               TAGS="pre"
             fi
           fi
-          # プレースホルダー置換
-          TAGS="${TAGS//\{date\}/${{ steps.tagvars.outputs.date }}}"
-          TAGS="${TAGS//\{datetime\}/${{ steps.tagvars.outputs.datetime }}}"
-          TAGS="${TAGS//\{gitTag\}/${{ steps.tagvars.outputs.gitTag }}}"
-          TAGS="${TAGS//\{gitSha\}/${{ steps.tagvars.outputs.gitSha }}}"
-          TAGS="${TAGS//\{shortSha\}/${{ steps.tagvars.outputs.shortSha }}}"
-          TAGS="${TAGS//\{branch\}/${{ steps.tagvars.outputs.branch }}}"
-          TAGS="${TAGS//\{repo\}/${{ steps.tagvars.outputs.repo }}}"
-          TAGS="${TAGS//\{owner\}/${{ steps.tagvars.outputs.owner }}}"
-          TAGS="${TAGS//\{name\}/${{ steps.tagvars.outputs.name }}}"
-          TAGS="${TAGS//\{latest\}/latest}"
+
+          # サポートするプレースホルダのリスト（latestは除外）
+          PLACEHOLDERS="date datetime gitTag gitSha shortSha branch repo owner name"
+
+          # すべてのプレースホルダをループで一括置換
+          for placeholder in $PLACEHOLDERS; do
+            value="${{ steps.tagvars.outputs.date }}"
+            case "$placeholder" in
+              date)      value="${{ steps.tagvars.outputs.date }}" ;;
+              datetime)  value="${{ steps.tagvars.outputs.datetime }}" ;;
+              gitTag)    value="${{ steps.tagvars.outputs.gitTag }}" ;;
+              gitSha)    value="${{ steps.tagvars.outputs.gitSha }}" ;;
+              shortSha)  value="${{ steps.tagvars.outputs.shortSha }}" ;;
+              branch)    value="${{ steps.tagvars.outputs.branch }}" ;;
+              repo)      value="${{ steps.tagvars.outputs.repo }}" ;;
+              owner)     value="${{ steps.tagvars.outputs.owner }}" ;;
+              name)      value="${{ steps.tagvars.outputs.name }}" ;;
+            esac
+            TAGS="${TAGS//\{$placeholder\}/$value}"
+          done
+
           # 空要素や重複カンマを除去
           TAGS=$(echo "$TAGS" | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
           MAIN_TAG=$(echo "$TAGS" | cut -d, -f1)

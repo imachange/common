@@ -4,6 +4,14 @@
     "dockerfile": "Dockerfile"
   },
   "remoteUser": "vscode",
+  "customizations": {
+      "vscode": {
+          "extensions": [
+              "github.copilot",
+              "github.copilot-chat"
+          ]
+      }
+  },
   "mounts": [
     "source=pnpm-store-bookworm,target=/home/vscode/.local/share/pnpm,type=volume",
     "source=mise-data-bookworm,target=/home/vscode/.local/share/mise,type=volume",
