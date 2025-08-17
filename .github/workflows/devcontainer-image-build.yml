@@ -21,6 +21,7 @@ on:
             {repo}      ... リポジトリ名
             {owner}     ... リポジトリオーナー
             {name}      ... devcontainerディレクトリ名
+            {parent}    ... devcontainer.jsonの1つ上のディレクトリ名（.devcontainerやルート直下は空）
         required: false
         type: string
         default: ""
@@ -267,6 +268,19 @@ jobs:
           REPO="${GITHUB_REPOSITORY#*/}"
           OWNER="${GITHUB_REPOSITORY%/*}"
           NAME="${{ matrix.name }}"
+
+          # parent: CONFIG_FILEの1つ上のディレクトリ名
+          CONFIG_FILE="${{ inputs.configFile }}"
+          if [ -z "$CONFIG_FILE" ]; then
+            CONFIG_FILE="${{ matrix.dir }}/devcontainer.json"
+          fi
+          PARENT_DIR=$(dirname "$CONFIG_FILE")
+          if [[ "$PARENT_DIR" == "." || "$PARENT_DIR" == ".devcontainer" ]]; then
+            PARENT=""
+          else
+            PARENT=$(basename "$PARENT_DIR")
+          fi
+
           echo "date=$DATE" >> $GITHUB_OUTPUT
           echo "datetime=$DATETIME" >> $GITHUB_OUTPUT
           echo "gitTag=$GIT_TAG" >> $GITHUB_OUTPUT
@@ -276,6 +290,7 @@ jobs:
           echo "repo=$REPO" >> $GITHUB_OUTPUT
           echo "owner=$OWNER" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "parent=$PARENT" >> $GITHUB_OUTPUT
 
       - name: タグ置換・分岐
         id: meta
@@ -289,27 +304,19 @@ jobs:
               TAGS="pre"
             fi
           fi
-
-          # サポートするプレースホルダのリスト（latestは除外）
-          PLACEHOLDERS="date datetime gitTag gitSha shortSha branch repo owner name"
-
-          # すべてのプレースホルダをループで一括置換
-          for placeholder in $PLACEHOLDERS; do
-            value="${{ steps.tagvars.outputs.date }}"
-            case "$placeholder" in
-              date)      value="${{ steps.tagvars.outputs.date }}" ;;
-              datetime)  value="${{ steps.tagvars.outputs.datetime }}" ;;
-              gitTag)    value="${{ steps.tagvars.outputs.gitTag }}" ;;
-              gitSha)    value="${{ steps.tagvars.outputs.gitSha }}" ;;
-              shortSha)  value="${{ steps.tagvars.outputs.shortSha }}" ;;
-              branch)    value="${{ steps.tagvars.outputs.branch }}" ;;
-              repo)      value="${{ steps.tagvars.outputs.repo }}" ;;
-              owner)     value="${{ steps.tagvars.outputs.owner }}" ;;
-              name)      value="${{ steps.tagvars.outputs.name }}" ;;
-            esac
-            TAGS="${TAGS//\{$placeholder\}/$value}"
-          done
-
+          # プレースホルダー置換
+          TAGS="${TAGS//\{date\}/${{ steps.tagvars.outputs.date }}}"
+          TAGS="${TAGS//\{datetime\}/${{ steps.tagvars.outputs.datetime }}}"
+          TAGS="${TAGS//\{gitTag\}/${{ steps.tagvars.outputs.gitTag }}}"
+          TAGS="${TAGS//\{gitSha\}/${{ steps.tagvars.outputs.gitSha }}}"
+          TAGS="${TAGS//\{shortSha\}/${{ steps.tagvars.outputs.shortSha }}}"
+          TAGS="${TAGS//\{branch\}/${{ steps.tagvars.outputs.branch }}}"
+          TAGS="${TAGS//\{repo\}/${{ steps.tagvars.outputs.repo }}}"
+          TAGS="${TAGS//\{owner\}/${{ steps.tagvars.outputs.owner }}}"
+          TAGS="${TAGS//\{name\}/${{ steps.tagvars.outputs.name }}}"
+          TAGS="${TAGS//\{parent\}/${{ steps.tagvars.outputs.parent }}}"
+          # 空になったparentやgitTagの前後の-,_,.,,を除去
+          TAGS=$(echo "$TAGS" | sed -E 's/([._,-]){2,}/\1/g; s/([._,-])+/\1/g; s/([._,-])+$//; s/^([._,-])+//; s/,+,/,/g; s/^,+//; s/,+$//')
           # 空要素や重複カンマを除去
           TAGS=$(echo "$TAGS" | sed 's/,,*/,/g' | sed 's/^,//;s/,$//')
           MAIN_TAG=$(echo "$TAGS" | cut -d, -f1)
@@ -337,27 +344,16 @@ jobs:
 
       - name: 結果出力
         id: set-result
-        run: |
-          # ワークフロー全体のURL
-          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # このジョブのURL（API取得は失敗しても無視）
-          JOB_URL="$RUN_URL"
-          {
-            JOBS_JSON=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs")
-            JOB_ID=$(echo "$JOBS_JSON" | grep -B 10 "\"name\":\"${GITHUB_JOB}\"" | grep '"id":' | head -n1 | awk '{print $2}' | tr -d ',')
-            if [ -n "$JOB_ID" ]; then
-              JOB_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/$JOB_ID"
-            fi
-          } || true
-
-          if [ "${{ steps.devci.outcome }}" = "success" ]; then
-            echo "result=success" >> $GITHUB_OUTPUT
-            echo "image_url=${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.main_tag }}" >> $GITHUB_OUTPUT
-            echo "error_message=✅ 成功: $RUN_URL" >> $GITHUB_OUTPUT
-          else
-            echo "result=failure" >> $GITHUB_OUTPUT
-            echo "image_url=" >> $GITHUB_OUTPUT
-            echo "error_message=❌ 失敗: $RUN_URL ジョブ: $JOB_URL" >> $GITHUB_OUTPUT
-          fi
-        continue-on-error: true
+        uses: ./.github/actions/result-output
+        with:
+          outcome: ${{ steps.devci.outcome }}
+          run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          job_url: ""
+          success_result: success
+          failure_result: failure
+          success_message: "✅ 成功"
+          failure_message: "❌ 失敗"
+          success_outputs: |
+            image_url=${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.main_tag }}
+          failure_outputs: |
+            image_url=
