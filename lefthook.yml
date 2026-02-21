@@ -1,0 +1,19 @@
+pre-commit:
+  commands:
+    gitleaks:
+      run: gitleaks detect --no-banner --staged
+
+commit-msg:
+  commands:
+    format-check:
+      # GNU grep (-P) は Dev Container (Linux) 環境で利用可能
+      run: |
+        commit_msg=$(cat {1})
+        if ! echo "$commit_msg" | grep -qP '^[\x{4e00}-\x{9fff}]{2}(\([^\)]+\))?: .+'; then
+          echo "❌ コミットメッセージのフォーマットが正しくありません。"
+          echo "   正しい形式: <漢字2文字>[(範囲)]: [絵文字] <変更内容の説明> (#チケット番号)"
+          echo "   ※ 範囲・絵文字は任意です。"
+          echo "   例: 機能(check): ✨ Python用のLint設定を追加 (#42)"
+          echo "   例: 修正: パスワードリセット時のエラーを解消 (#番号)"
+          exit 1
+        fi
