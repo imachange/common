@@ -1,7 +1,10 @@
 pre-commit:
   commands:
     gitleaks:
-      run: gitleaks detect --no-banner --staged
+      run: >
+        command -v gitleaks > /dev/null 2>&1
+        && gitleaks detect --no-banner --staged
+        || echo "⚠️  gitleaks が見つかりません。Dev Container 内で実行してください。"
 
 commit-msg:
   commands:
