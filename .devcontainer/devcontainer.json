@@ -24,7 +24,7 @@
       ]
     }
   },
-  "onCreateCommand": "corepack enable pnpm",
+  "onCreateCommand": "corepack enable",
   "postCreateCommand": "pnpm install",
   "remoteUser": "node"
 }
