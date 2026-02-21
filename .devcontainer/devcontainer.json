@@ -1,0 +1,30 @@
+{
+  "name": "imachange-common-dev",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        },
+        "javascript.preferences.importModuleSpecifierEnding": "js",
+        "typescript.preferences.importModuleSpecifierEnding": "js"
+      },
+      "extensions": [
+        "github.copilot",
+        "github.copilot-chat",
+        "biomejs.biome",
+        "eamodio.gitlens",
+        "github.vscode-pull-request-github",
+        "yoavbls.pretty-ts-errors"
+      ]
+    }
+  },
+  "onCreateCommand": "corepack enable",
+  "postCreateCommand": "pnpm install",
+  "remoteUser": "node"
+}

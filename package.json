@@ -1,0 +1,23 @@
+{
+  "name": "@imachange/common",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "prepare": "lefthook install",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "lint": "pnpm --filter './packages/*' run lint",
+    "test": "pnpm --filter './packages/*' run test"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "lefthook": "^1.6.10",
+    "typescript": "^5.4.5",
+    "@biomejs/biome": "^1.9.0"
+  }
+}
