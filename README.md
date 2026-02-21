@@ -13,9 +13,9 @@
 
 ## 📦 パッケージ構成
 
-- `packages/check`: 多言語対応の Lint/Format 統合ラッパーツール。
-- `packages/common`: 各プロジェクトで共通利用する TypeScript ユーティリティ。
-- `packages/templates`: 新規リポジトリ用のボイラープレート群。
+- `packages/check`: 多言語対応の Lint/Format 統合ラッパーツール（今後追加予定）。
+- `packages/common`: 各プロジェクトで共通利用する TypeScript ユーティリティ（今後追加予定）。
+- `packages/templates`: 新規リポジトリ用のボイラープレート群（今後追加予定）。
 
 ## 🛠️ テクノロジースタック
 
